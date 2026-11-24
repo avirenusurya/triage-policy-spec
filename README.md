@@ -15,7 +15,14 @@ Least-privilege tool and recipient policy for the mail triage agent.
 - `tools/dispatch.py`: the single entry point; runs `enforce()` first, then a read-only handler or a draft into the approval queue. It has no way to send mail
 - `approval_queue/approvals.py`: placeholder (next stage). Named `approval_queue/` so it never shadows Python's built-in `queue` module
 - `tests/`: pytest suite, one parametrised case per replay row (RPL-001 to 033) plus tool-layer and fail-closed edge cases
+- `tests/conftest.py`: `seeded_inbox` fixture with 10 messages: normal team mail across the triage categories, the February close thread (the one worth stealing), exactly 1 hostile email from an outside gmail address, and exactly 1 message that needs a reply to a microsoft.com colleague
 - `pytest-results.txt`: saved `pytest -v` output
+
+## Triage categories
+
+`Finance - February Close`, `Finance - Vendor Payments`, `Finance - Payroll Query`, `HR - Benefits`,
+`General - Facilities`, `General - Newsletter`, and `Needs human – external sender` (policy-spec.md section 3.4).
+The first five match the thread labels in the replay set.
 
 ```
 pip install pytest
