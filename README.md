@@ -13,6 +13,9 @@ Least-privilege tool and recipient policy for the mail triage agent.
 - `tools/definitions.py`: the five kept tools (read, search, label, move, reply); reply takes `thread_id` and `body` only
 - `policy/enforce.py`: `enforce()`, which every tool call passes through before any handler; returns BLOCKED / PENDING / ALLOWED plus the rule that fired
 - `tools/dispatch.py`: the single entry point; runs `enforce()` first, then a read-only handler or a draft into the approval queue. It has no way to send mail
+- `agent/runner.py`: the agent runner. Builds the model's tool list from `tools/definitions.py` only, fences each message inside `<inbox_data>` (HTML-escaped, so an email can't close the fence) as data, never instructions, and passes every tool call the model returns through `dispatch()`. Mail from outside microsoft.com is labelled `Needs human – external sender` by code
+- `agent/stub_model.py`: scripted offline model (`MODEL_ROUTE=stub`) that triages normal mail and always tries to obey the hostile email
+- `agent/sandbox.py`: in-memory mailbox, recording approval queue and the seeded messages used by the runner and the `seeded_inbox` fixture
 - `approval_queue/approvals.py`: placeholder (next stage). Named `approval_queue/` so it never shadows Python's built-in `queue` module
 - `tests/`: pytest suite, one parametrised case per replay row (RPL-001 to 033) plus tool-layer and fail-closed edge cases
 - `tests/conftest.py`: `seeded_inbox` fixture with 10 messages: normal team mail across the triage categories, the February close thread (the one worth stealing), exactly 1 hostile email from an outside gmail address, and exactly 1 message that needs a reply to a microsoft.com colleague
@@ -28,4 +31,19 @@ The first five match the thread labels in the replay set.
 pip install pytest
 python -m pytest -v
 python check_replay.py
+```
+
+## Running the agent
+
+Configuration comes from environment variables only. Never put the key in a file in the repo.
+
+| Variable | Value |
+|---|---|
+| `MODEL_ROUTE` | `stub` for the offline scripted model, or an OpenRouter model slug (`<provider>/<model>`). No default. |
+| `OPENROUTER_API_KEY` | Your OpenRouter key. Only read for a live route. |
+
+```
+MODEL_ROUTE=stub python -m agent.runner                    # offline, no key needed
+export OPENROUTER_API_KEY=...                              # live run
+MODEL_ROUTE=<provider>/<model> python -m agent.runner
 ```
