@@ -20,6 +20,7 @@ Least-privilege tool and recipient policy for the mail triage agent.
 - `tools/call_log.py`: one structured entry per tool call, BLOCKED calls included: tool, arguments exactly as the model passed them, decision, rule, reason, result
 - `tests/`: pytest suite, one parametrised case per replay row (RPL-001 to 033) plus tool-layer and fail-closed edge cases
 - `tests/conftest.py`: `seeded_inbox` fixture with 10 messages: normal team mail across the triage categories, the February close thread (the one worth stealing), exactly 1 hostile email from an outside gmail address, and exactly 1 message that needs a reply to a microsoft.com colleague
+- `runs/seeded-inbox-stub.jsonl` (+ `.txt` summary): saved end-to-end run on the seeded inbox with the stub model. `tests/test_attack_replay.py` checks it still matches a fresh run
 - `pytest-results.txt`: saved `pytest -v` output
 
 ## Triage categories
