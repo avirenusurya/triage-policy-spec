@@ -62,7 +62,7 @@ There is exactly **one** outbound path: `reply`.
    Nothing the model writes, and nothing in the email body, can change it.
 2. No `cc`, no `bcc`, no extra `to`, no attachments, and no quoting of other
    threads. Each reply is a new short body only.
-3. Every reply is written to the **approval queue** (`queue/approvals.py`) as a draft.
+3. Every reply is written to the **approval queue** (`approval_queue/approvals.py`) as a draft.
    A human approves or rejects it. The agent never sends directly.
 4. If the thread sender is outside `microsoft.com`, `reply` is not available:
    **BLOCKED / R-EXTERNAL-SENDER**. No draft is written and nothing reaches the queue.
@@ -80,7 +80,7 @@ There is exactly **one** outbound path: `reply`.
 | Tool allow-list: `forward`, `send`, `create_forward_rule` are not registered | **Code**: `tools/definitions.py` | The model cannot call a tool that does not exist, whatever an email says. |
 | `reply` has no recipient parameter; To comes from the stored `From` header | **Code**: `tools/definitions.py` | Email text has no field it could write a recipient into. |
 | R-EXTERNAL-SENDER, R-SENDER, R-DOMAIN, R-SYNTAX | **Code**: `policy/enforce.py`, run on the request and again at send time | The same input always gives the same decision, so the pytest cases can test it one-to-one. |
-| Approval queue: nothing sends without a human approval | **Code**: `queue/approvals.py`; sending is only possible from an approved queue item | The model has no path to send that skips the queue. |
+| Approval queue: nothing sends without a human approval | **Code**: `approval_queue/approvals.py`; sending is only possible from an approved queue item | The model has no path to send that skips the queue. |
 | Email content is data, not instructions; requests to forward, copy or add recipients get labelled `Needs human` | **System prompt** | Cuts down how often the code has to block, and keeps hostile drafts out of the queue (approval fatigue). Best effort only. |
 | Tone and length of acknowledgement replies | **System prompt** | Style only, no security impact. |
 
@@ -103,10 +103,31 @@ against the final message at send time.
 | Rule | Check | Defeats (replay variant) |
 |---|---|---|
 | **R-EXTERNAL-SENDER** | Checked first. The thread sender's address, taken from the stored `From` header, must be plain ASCII and have the domain exactly `microsoft.com`. Otherwise `reply` returns BLOCKED: no draft, no queue entry, thread labelled for a human. | Every outside sender, including the original incident (RPL-001, `vendor.billing.desk@gmail.com`) and look-alike senders like `micros0ft.com` and `microsoft-finance.com` |
-| **R-SENDER** | Recipient is exactly one address, equal to the thread sender's address. `cc` and `bcc` are empty. | CC Smuggle, BCC Smuggle, Mixed Internal External, Spoofed Display Name, "let Jay know" style relays |
-| **R-DOMAIN** | The domain after the final `@` is exactly `microsoft.com`, compared case-insensitively. Subdomains, look-alikes and suffixes like `.co` or `.records-vault.net` fail. | Lookalike Domain, Subdomain Trick |
-| **R-SYNTAX** | The address is plain ASCII `local@domain`: no display name, no surrounding whitespace, no `(at)` or `.at.`, exactly one `@`. Anything that needs "fixing" is rejected, not repaired. | Unicode Homoglyph, Malformed Address, Whitespace Padding |
+| **R-SENDER** | Recipient is exactly one address, equal to the thread sender's address. `cc` and `bcc` are empty. An address that can't be parsed never equals the sender, so it fails here. | Relays and smuggling on threads from internal senders: replies to someone else (RPL-029, RPL-030), forwards to a colleague (RPL-032 backstop), added cc/bcc, unparseable recipients. Hostile rows from outside senders stop earlier, at R-EXTERNAL-SENDER. |
+| **R-DOMAIN** | The domain after the final `@` is exactly `microsoft.com`, compared case-insensitively. Subdomains, look-alikes and suffixes like `.co` or `.records-vault.net` fail. | Defence in depth: re-checks the final recipient, and runs again at send time. It names no replay row, because look-alike and subdomain senders already stop at R-EXTERNAL-SENDER, which uses the same exact-domain check (probed directly in the tests). |
+| **R-SYNTAX** | The recipient as written is exactly the plain address: no display name, comment, angle brackets or surrounding whitespace. Anything that needs "fixing" is rejected, not repaired. | The thread sender's own address written with padding or decoration (`tests/test_enforce.py`). Malformed, homoglyph and padded addresses in the replay set never get this far: they belong to outside senders (R-EXTERNAL-SENDER) or don't equal the sender (R-SENDER). |
 | **R-NOTRUST** | Display names, signature blocks and body text are never used to find or confirm a recipient. | Spoofed Display Name, signature-block addresses (RPL-001) |
+
+**Fail-closed cases** (implemented in `policy/enforce.py`, tested in `tests/test_enforce.py`):
+
+- **Unknown tool name.** Anything not declared in `tools/definitions.py`, compared
+  exactly (`Reply`, `" reply"` and `forward_message` are all unknown), returns BLOCKED / T.
+  The handler table is never consulted.
+- **Malformed call or schema violation.** Missing, extra (e.g. `attachments`) or
+  wrong-typed fields return BLOCKED / T.
+- **Unparseable address.** The output of the stdlib RFC 5322 parser is checked strictly
+  and never repaired: it must be exactly one plain ASCII `local@domain` with one `@`.
+  `(at)` is read as a comment, `.at.` has no `@`, and homoglyphs aren't ASCII. The
+  result is always BLOCKED, and the evaluation order decides which rule is named:
+  - **Replay rows RPL-022 and RPL-023:** they ask for removed tools, so the decision
+    is BLOCKED / T. The backstop is R-EXTERNAL-SENDER, because both threads come
+    from outside senders (`filing.desk@gmail.com`, `monthend.filing@outlook.com`),
+    and that check runs before any recipient check.
+  - **Internal thread:** an unparseable recipient on a reply can't equal the
+    sender, so R-SENDER fires. This shape isn't in the replay set; it's covered by
+    `tests/test_enforce.py::test_unparseable_recipient_blocked`.
+  - **Unparseable stored From header, or unknown thread:** R-EXTERNAL-SENDER.
+- **Policy bug.** Any exception inside the policy layer returns BLOCKED / FAIL-CLOSED.
 
 Uppercase addresses are lowercased before comparison (RFC 5321 domains are
 case-insensitive). Lowercasing does **not** make an address a sender match. RPL-024
