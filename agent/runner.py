@@ -7,6 +7,8 @@ Configuration (environment only, never a file in the repo):
                         OpenRouter model slug, e.g. "<provider>/<model>". No default.
     OPENROUTER_API_KEY  OpenRouter key; read only for a live route.
     CALL_LOG_PATH       optional: write the structured call log there as JSON Lines.
+    APPROVE_AS          optional: after the run, approve every PENDING record as this
+                        reviewer (an evidence run). The log records sent mail before and after.
 
 Run against the sandbox inbox:
     MODEL_ROUTE=stub python -m agent.runner
@@ -234,12 +236,24 @@ def main() -> int:
 
     model = make_model()
     mailbox = InMemoryMailbox(messages=SEED_MESSAGES)
-    approvals = ApprovalQueue(mailbox)
-    report = run_inbox(SEED_MESSAGES, model, mailbox, approvals)
-    for e in report.call_log.entries:
+    log = CallLog()
+    approvals = ApprovalQueue(mailbox, log=log)
+    report = RunReport(call_log=log)
+    for msg in sorted(SEED_MESSAGES, key=lambda m: m["received_at"]):
+        triage_message(msg, model, mailbox, approvals, report)
+    for e in log.tool_calls():
         print(f"{e['message_id']}  {e['source']:<6} {str(e['tool']):<14} {e['decision']:<8} {e['rule']}")
     print(f"\nAwaiting approval: {[(r.record_id, r.to, r.status) for r in approvals.pending()]}")
     print(f"Sent mail: {len(mailbox.outbox)} (only ApprovalQueue.approve() can add to it)")
+    log.event("sent_mail", stage="after_run", count=len(mailbox.outbox), to=[m.to for m in mailbox.outbox])
+
+    approver = os.environ.get("APPROVE_AS", "").strip()
+    if approver:
+        for record in approvals.pending():
+            approvals.approve(record.record_id, approver)
+            print(f"Approved {record.record_id} as {approver}: {record.status}")
+        log.event("sent_mail", stage="after_approve", count=len(mailbox.outbox), to=[m.to for m in mailbox.outbox])
+        print(f"Sent mail after approval: {[m.to for m in mailbox.outbox]}")
     path = os.environ.get("CALL_LOG_PATH")
     if path:
         with open(path, "w", encoding="utf-8") as f:

@@ -63,9 +63,10 @@ class SentMail:
 class ApprovalQueue:
     """`mailbox` provides thread_from(thread_id) for the re-check and send(message) for delivery."""
 
-    def __init__(self, mailbox, clock=utc_now):
+    def __init__(self, mailbox, clock=utc_now, log=None):
         self._mailbox = mailbox
         self._clock = clock
+        self._log = log  # optional tools.call_log.CallLog: approve/reject outcomes are logged
         self._ids = itertools.count(1)
         self.records: dict[str, ApprovalRecord] = {}
 
@@ -107,10 +108,12 @@ class ApprovalQueue:
         if recheck.decision != PENDING or recheck.recipient != record.to:
             record.status = STATUS_REJECTED
             record.note = f"refused at approve time: {recheck.decision} {recheck.rule}"
+            self._event(record, "refused", approver, delivered_to=None)
             return None
         sent = SentMail(record.record_id, record.thread_id, record.to, record.body, record.decided_at, approver)
         self._mailbox.send(sent)
         record.status = STATUS_APPROVED
+        self._event(record, "approved", approver, delivered_to=record.to)
         return sent
 
     def reject(self, record_id: str, reviewer: str, reason: str = "") -> ApprovalRecord:
@@ -119,4 +122,11 @@ class ApprovalQueue:
         record.status = STATUS_REJECTED
         record.decided_at, record.decided_by = self._clock(), reviewer
         record.note = reason or "rejected by reviewer"
+        self._event(record, "rejected", reviewer, delivered_to=None)
         return record
+
+    def _event(self, record, event, by, delivered_to):
+        if self._log is not None:
+            self._log.event("approval", event=event, record_id=record.record_id, tool=record.tool,
+                            thread_id=record.thread_id, to=record.to, by=by,
+                            delivered_to=delivered_to, note=record.note)

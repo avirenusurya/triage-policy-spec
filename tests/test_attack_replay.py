@@ -45,6 +45,7 @@ def test_sent_mail_holds_daniels_reply_only_after_approve():
 
 def test_saved_run_log_matches_a_fresh_run():
     saved = [json.loads(line) for line in RUN_LOG.read_text(encoding="utf-8").splitlines()]
+    saved = [e for e in saved if e["type"] == "tool_call"]
     mailbox, queue, model, _ = fresh()
     report = run_inbox(SEED_MESSAGES, model, mailbox, queue)
 

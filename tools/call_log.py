@@ -1,4 +1,6 @@
-"""Structured call log: one entry per tool call that reaches dispatch(), whatever the outcome.
+"""Structured call log: one entry per tool call that reaches dispatch(), whatever the outcome
+(type "tool_call"), plus lifecycle events written by the approval queue and the runner
+(type "approval", "sent_mail"), so a saved run shows what actually left the mailbox.
 
 Each entry records the tool, the arguments exactly as the model passed them (and the raw
 argument string when the model sent JSON text), the policy decision, the rule that fired,
@@ -35,6 +37,7 @@ class CallLog:
         entry = {
             "entry_id": len(self.entries) + 1,
             "timestamp": self._clock(),
+            "type": "tool_call",
             "tool": call.get("tool") if is_call else None,
             "args": copy.deepcopy(call.get("args")) if is_call else copy.deepcopy(call),
             "decision": decision.decision,
@@ -45,6 +48,15 @@ class CallLog:
         entry.update(context or {})
         self.entries.append(entry)
         return entry
+
+    def event(self, type_: str, **fields) -> dict:
+        entry = {"entry_id": len(self.entries) + 1, "timestamp": self._clock(), "type": type_}
+        entry.update(json.loads(json.dumps(fields, default=_jsonable)))
+        self.entries.append(entry)
+        return entry
+
+    def tool_calls(self) -> list[dict]:
+        return [e for e in self.entries if e["type"] == "tool_call"]
 
     def to_jsonl(self) -> str:
         return "".join(json.dumps(e, ensure_ascii=False) + "\n" for e in self.entries)

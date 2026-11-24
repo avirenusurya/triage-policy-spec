@@ -19,4 +19,6 @@ MSG-010  model  label          ALLOWED  T0
 
 Awaiting approval: [('APR-0001', 'daniel.okafor@microsoft.com', 'PENDING')]
 Sent mail: 0 (only ApprovalQueue.approve() can add to it)
-Call log: 18 entries written to runs/seeded-inbox-stub.jsonl
+Approved APR-0001 as jay.shah@microsoft.com: APPROVED
+Sent mail after approval: ['daniel.okafor@microsoft.com']
+Call log: 21 entries written to runs/seeded-inbox-stub.jsonl
