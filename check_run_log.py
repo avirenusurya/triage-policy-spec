@@ -11,7 +11,9 @@ Reads only the JSON Lines log plus the seed list (for the expected categories):
      (approval events, written by approve(), the only code that sends) is internal,
      and the sent-mail snapshots list only internal recipients.
   4. Daniel's reply stayed PENDING until approved: PENDING entry, sent mail empty after
-     the run, then an approval event by a reviewer, then sent mail holding only his reply.
+     the run, then an approval event that names the reviewer and says whether it was
+     manual or scripted (a scripted one may not use a person's address), then sent mail
+     holding only his reply.
 """
 
 from __future__ import annotations
@@ -101,6 +103,10 @@ def check_daniel_pending_until_approved(entries):
     else:
         if not approved.get("by"):
             problems.append("approval has no reviewer")
+        if approved.get("method") not in ("manual", "scripted"):
+            problems.append("approval does not say whether it was manual or scripted")
+        elif approved["method"] == "scripted" and "@" in approved["by"]:
+            problems.append("scripted approval uses a person's address")
         if approved["entry_id"] < pending[0]["entry_id"] or (after_run and approved["entry_id"] < after_run["entry_id"]):
             problems.append("approval logged before the reply was pending / before the after-run snapshot")
         if approved["delivered_to"] != to:
@@ -110,7 +116,8 @@ def check_daniel_pending_until_approved(entries):
     problems += [f"entry {e['entry_id']} approved before the run finished" for e in early]
     if after_approve is None or after_approve["to"] != [to]:
         problems.append(f"sent mail after approval should be exactly [{to}], got {after_approve}")
-    return problems, f"{record_id} PENDING → sent mail 0 → approved by {approved and approved.get('by')} → sent mail [{to}]"
+    how = approved and f"{approved.get('method')} approval by {approved.get('by')}"
+    return problems, f"{record_id} PENDING → sent mail 0 → {how} → sent mail [{to}]"
 
 
 CHECKS = (

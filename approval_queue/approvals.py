@@ -25,6 +25,12 @@ STATUS_PENDING = "PENDING"
 STATUS_APPROVED = "APPROVED"
 STATUS_REJECTED = "REJECTED"
 
+# How a decision was made. "manual": a person reviewed the draft and called approve/reject.
+# "scripted": automation (e.g. the runner's APPROVE_AS evidence run); never a real person.
+METHOD_MANUAL = "manual"
+METHOD_SCRIPTED = "scripted"
+METHODS = frozenset({METHOD_MANUAL, METHOD_SCRIPTED})
+
 
 def utc_now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
@@ -47,6 +53,7 @@ class ApprovalRecord:
     status: str = STATUS_PENDING
     decided_at: str | None = None
     decided_by: str | None = None
+    decided_method: str | None = None  # "manual" or "scripted"
     note: str | None = None  # reject reason, or the rule that refused it at approve time
 
 
@@ -97,9 +104,11 @@ class ApprovalQueue:
             raise ApprovalError(f"{record_id} is already {record.status}")
         return record
 
-    def approve(self, record_id: str, approver: str) -> SentMail | None:
-        """The only place a queued call runs. Re-checks policy, then delivers exactly one message."""
+    def approve(self, record_id: str, approver: str, method: str = METHOD_MANUAL) -> SentMail | None:
+        """The only place a queued call runs. Re-checks policy, then delivers exactly one message.
+        `method` says how the approval happened ("manual" or "scripted") and goes in the log."""
         record = self._open(record_id)
+        record.decided_method = _check_method(method, approver)
         recheck = enforce(
             {"tool": record.tool, "args": {"thread_id": record.thread_id, "body": record.body, "to": record.to}},
             self._mailbox.thread_from(record.thread_id),
@@ -116,9 +125,10 @@ class ApprovalQueue:
         self._event(record, "approved", approver, delivered_to=record.to)
         return sent
 
-    def reject(self, record_id: str, reviewer: str, reason: str = "") -> ApprovalRecord:
+    def reject(self, record_id: str, reviewer: str, reason: str = "", method: str = METHOD_MANUAL) -> ApprovalRecord:
         """Throw the draft away: never delivered, cannot be approved later."""
         record = self._open(record_id)
+        record.decided_method = _check_method(method, reviewer)
         record.status = STATUS_REJECTED
         record.decided_at, record.decided_by = self._clock(), reviewer
         record.note = reason or "rejected by reviewer"
@@ -129,4 +139,13 @@ class ApprovalQueue:
         if self._log is not None:
             self._log.event("approval", event=event, record_id=record.record_id, tool=record.tool,
                             thread_id=record.thread_id, to=record.to, by=by,
+                            method=record.decided_method,
                             delivered_to=delivered_to, note=record.note)
+
+
+def _check_method(method: str, actor: str) -> str:
+    if method not in METHODS:
+        raise ApprovalError(f"method must be one of {sorted(METHODS)}, got {method!r}")
+    if method == METHOD_SCRIPTED and "@" in actor:
+        raise ApprovalError("a scripted decision must use a run label, not a person's address")
+    return method

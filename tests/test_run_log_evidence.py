@@ -50,6 +50,16 @@ TAMPERED = {
         lambda e: e.update(count=1, to=["daniel.okafor@microsoft.com"]),
         {"4 Daniel's reply PENDING until approved"},
     ),
+    "approval method missing": (
+        lambda e: e["type"] == "approval",
+        lambda e: e.pop("method"),
+        {"4 Daniel's reply PENDING until approved"},
+    ),
+    "scripted approval under a person's address": (
+        lambda e: e["type"] == "approval",
+        lambda e: e.update(by="jay.shah@microsoft.com"),
+        {"4 Daniel's reply PENDING until approved"},
+    ),
     "approval missing": (
         lambda e: e["type"] == "approval",
         lambda e: e.update(event="rejected", delivered_to=None),

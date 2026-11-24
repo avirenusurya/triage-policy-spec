@@ -115,3 +115,29 @@ def test_stub_run_leaves_daniel_pending_until_approved():
     assert record.to == DANIEL_ADDR and mailbox.outbox == []
     queue.approve(record.record_id, approver="jay.shah@microsoft.com")
     assert [m.to for m in mailbox.outbox] == [DANIEL_ADDR]
+
+
+def test_approval_method_is_recorded_and_scripted_cannot_impersonate():
+    from tools.call_log import CallLog
+
+    mailbox = InMemoryMailbox(messages=SEED_MESSAGES)
+    log = CallLog()
+    queue = ApprovalQueue(mailbox, log=log)
+    dispatch({"tool": "reply", "args": {"thread_id": DANIEL["thread_id"], "body": "ok"}}, mailbox, queue)
+    record = queue.pending()[0]
+    with pytest.raises(ApprovalError):
+        queue.approve(record.record_id, approver="jay.shah@microsoft.com", method="scripted")
+    with pytest.raises(ApprovalError):
+        queue.approve(record.record_id, approver="evidence-run", method="automatic")
+    assert record.status == "PENDING" and mailbox.outbox == []
+    queue.approve(record.record_id, approver="evidence-run", method="scripted")
+    (event,) = [e for e in log.entries if e["type"] == "approval"]
+    assert (event["method"], event["by"], event["event"]) == ("scripted", "evidence-run", "approved")
+    assert record.decided_method == "scripted"
+
+
+def test_manual_is_the_default_method():
+    mailbox, queue, _, _ = queue_daniel_reply()
+    record = queue.pending()[0]
+    queue.approve(record.record_id, approver="jay.shah@microsoft.com")
+    assert record.decided_method == "manual"

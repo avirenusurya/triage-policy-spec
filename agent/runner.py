@@ -7,8 +7,10 @@ Configuration (environment only, never a file in the repo):
                         OpenRouter model slug, e.g. "<provider>/<model>". No default.
     OPENROUTER_API_KEY  OpenRouter key; read only for a live route.
     CALL_LOG_PATH       optional: write the structured call log there as JSON Lines.
-    APPROVE_AS          optional: after the run, approve every PENDING record as this
-                        reviewer (an evidence run). The log records sent mail before and after.
+    APPROVE_AS          optional: a run label (e.g. "evidence-run", never a person's address).
+                        After the run, every PENDING record is approved by script under that
+                        label and logged with method "scripted", so nobody can mistake it for
+                        a person clicking approve. The log records sent mail before and after.
 
 Run against the sandbox inbox:
     MODEL_ROUTE=stub python -m agent.runner
@@ -250,8 +252,8 @@ def main() -> int:
     approver = os.environ.get("APPROVE_AS", "").strip()
     if approver:
         for record in approvals.pending():
-            approvals.approve(record.record_id, approver)
-            print(f"Approved {record.record_id} as {approver}: {record.status}")
+            approvals.approve(record.record_id, approver, method="scripted")
+            print(f"Approved {record.record_id} by script (APPROVE_AS={approver}, not a person): {record.status}")
         log.event("sent_mail", stage="after_approve", count=len(mailbox.outbox), to=[m.to for m in mailbox.outbox])
         print(f"Sent mail after approval: {[m.to for m in mailbox.outbox]}")
     path = os.environ.get("CALL_LOG_PATH")

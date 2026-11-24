@@ -201,3 +201,12 @@ def test_main_runs_offline_with_stub(monkeypatch, capsys):
     out = capsys.readouterr().out
     assert "Sent mail: 0" in out
     assert "daniel.okafor@microsoft.com" in out
+
+
+def test_main_refuses_a_person_as_scripted_approver(monkeypatch):
+    from approval_queue.approvals import ApprovalError
+
+    monkeypatch.setenv("MODEL_ROUTE", "stub")
+    monkeypatch.setenv("APPROVE_AS", "jay.shah@microsoft.com")
+    with pytest.raises(ApprovalError, match="run label"):
+        runner.main()
