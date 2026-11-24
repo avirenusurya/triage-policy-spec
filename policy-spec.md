@@ -62,8 +62,20 @@ There is exactly **one** outbound path: `reply`.
    Nothing the model writes, and nothing in the email body, can change it.
 2. No `cc`, no `bcc`, no extra `to`, no attachments, and no quoting of other
    threads. Each reply is a new short body only.
-3. Every reply is written to the **approval queue** (`approval_queue/approvals.py`) as a draft.
-   A human approves or rejects it. The agent never sends directly.
+3. Every reply is written to the **approval queue** (`approval_queue/approvals.py`) as a
+   record: tool name, full arguments as the model passed them, timestamp, and status
+   `PENDING`. The agent never sends directly. While a record is `PENDING`, the
+   sent-mail record holds nothing for it.
+   - `approve()` is the **only** function that delivers mail. It runs `enforce()` again
+     against the thread's current stored From header. If the recipient was tampered
+     with, or a newer message now comes from outside, it refuses and marks the record
+     `REJECTED`. Otherwise it delivers exactly one message, to the thread author, and
+     marks the record `APPROVED`.
+   - `reject()` throws the draft away. It is never delivered and can't be approved
+     later; the record stays for the audit trail.
+   - Every tool call, BLOCKED ones included, gets one structured call-log entry
+     (`tools/call_log.py`): tool, arguments exactly as the model passed them,
+     decision, rule, reason and result.
 4. If the thread sender is outside `microsoft.com`, `reply` is not available:
    **BLOCKED / R-EXTERNAL-SENDER**. No draft is written and nothing reaches the queue.
    The thread is labelled `Needs human – external sender` and a person decides

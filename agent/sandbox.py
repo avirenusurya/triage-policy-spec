@@ -2,7 +2,7 @@
 queue and the seeded messages. No network, no real mail."""
 
 class InMemoryMailbox:
-    """In-memory sandbox mailbox. `outbox` records anything put on the wire; no code path writes to it.
+    """In-memory sandbox mailbox. `outbox` is the sent-mail record; only ApprovalQueue.approve() writes to it.
 
     Build it from `threads` ({thread_id: stored From header}) for single-rule tests, or from
     `messages` (dicts with message_id, thread_id, from_header, subject, body, received_at).
@@ -45,7 +45,7 @@ class InMemoryMailbox:
         self.handler_calls.append(("move", thread_id, folder))
         self.folders[thread_id] = folder
 
-    def send(self, message):  # pragma: no cover - must never be called
+    def send(self, message):  # called only by ApprovalQueue.approve()
         self.outbox.append(message)
 
 
@@ -55,7 +55,7 @@ class RecordingApprovals:
     def __init__(self):
         self.submitted = []
 
-    def submit(self, draft, decision):
+    def submit(self, draft, decision, call=None):
         self.submitted.append((draft, decision))
 
 

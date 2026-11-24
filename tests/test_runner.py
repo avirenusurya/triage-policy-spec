@@ -150,7 +150,7 @@ def test_every_tool_call_goes_through_dispatch(monkeypatch):
     report = run_inbox(SEED_MESSAGES, CountingStub(), mailbox, approvals)
     runner_calls = [s for s in report.steps if s.source == "runner"]
     assert len(dispatched) == len(emitted) + len(runner_calls)
-    assert len(report.audit_log) == len(report.steps) == len(dispatched)
+    assert len(report.call_log.entries) == len(report.steps) == len(dispatched)
 
 
 # ---- live route, with OpenRouter's response faked (no network)
@@ -199,5 +199,5 @@ def test_main_runs_offline_with_stub(monkeypatch, capsys):
     monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
     assert runner.main() == 0
     out = capsys.readouterr().out
-    assert "Messages sent: 0" in out
+    assert "Sent mail: 0" in out
     assert "daniel.okafor@microsoft.com" in out

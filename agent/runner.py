@@ -6,6 +6,7 @@ Configuration (environment only, never a file in the repo):
     MODEL_ROUTE         "stub" for the scripted offline model (agent/stub_model.py), or an
                         OpenRouter model slug, e.g. "<provider>/<model>". No default.
     OPENROUTER_API_KEY  OpenRouter key; read only for a live route.
+    CALL_LOG_PATH       optional: write the structured call log there as JSON Lines.
 
 Run against the sandbox inbox:
     MODEL_ROUTE=stub python -m agent.runner
@@ -24,6 +25,7 @@ from email.utils import parseaddr
 
 from policy.enforce import Decision, is_own_domain
 from tools.definitions import TOOLS
+from tools.call_log import CallLog
 from tools.dispatch import dispatch
 
 API_KEY_ENV = "OPENROUTER_API_KEY"
@@ -161,7 +163,7 @@ class Step:
 class RunReport:
     steps: list[Step] = field(default_factory=list)
     summaries: dict = field(default_factory=dict)
-    audit_log: list[Decision] = field(default_factory=list)
+    call_log: CallLog = field(default_factory=CallLog)
 
     def for_message(self, message_id: str) -> list[Step]:
         return [s for s in self.steps if s.message_id == message_id]
@@ -181,8 +183,11 @@ def parse_tool_call(tool_call: dict) -> tuple[str | None, dict]:
     return tool_call.get("id"), {"tool": fn.get("name"), "args": args}
 
 
-def _run_call(call, msg, mailbox, approvals, report, source="model"):
-    outcome = dispatch(call, mailbox, approvals, report.audit_log)
+def _run_call(call, msg, mailbox, approvals, report, source="model", raw_arguments=None):
+    context = {"message_id": msg["message_id"], "source": source}
+    if raw_arguments is not None:
+        context["raw_arguments"] = raw_arguments  # the exact text the model sent
+    outcome = dispatch(call, mailbox, approvals, report.call_log, context)
     report.steps.append(Step(msg["message_id"], call, outcome.decision, source))
     return outcome
 
@@ -203,9 +208,11 @@ def triage_message(msg: dict, model, mailbox, approvals, report: RunReport, max_
             break
         for tool_call in tool_calls:
             call_id, call = parse_tool_call(tool_call)
-            outcome = _run_call(call, msg, mailbox, approvals, report)
+            raw = (tool_call.get("function") or {}).get("arguments")
+            outcome = _run_call(call, msg, mailbox, approvals, report, raw_arguments=raw)
             d = outcome.decision
-            result = {"decision": d.decision, "rule": d.rule, "reason": d.reason, "result": outcome.result}
+            logged = report.call_log.entries[-1]["result"]
+            result = {"decision": d.decision, "rule": d.rule, "reason": d.reason, "result": logged}
             conversation.append({"role": "tool", "tool_call_id": call_id, "content": fence(result)})
 
     # Spec section 3.4: mail from outside microsoft.com is labelled for a human by code, not by the model.
@@ -222,16 +229,22 @@ def run_inbox(messages, model, mailbox, approvals) -> RunReport:
 
 
 def main() -> int:
-    from agent.sandbox import SEED_MESSAGES, InMemoryMailbox, RecordingApprovals
+    from agent.sandbox import SEED_MESSAGES, InMemoryMailbox
+    from approval_queue.approvals import ApprovalQueue
 
     model = make_model()
-    mailbox, approvals = InMemoryMailbox(messages=SEED_MESSAGES), RecordingApprovals()
+    mailbox = InMemoryMailbox(messages=SEED_MESSAGES)
+    approvals = ApprovalQueue(mailbox)
     report = run_inbox(SEED_MESSAGES, model, mailbox, approvals)
-    for s in report.steps:
-        tool = s.call.get("tool") if isinstance(s.call, dict) else s.call
-        print(f"{s.message_id}  {s.source:<6} {str(tool):<14} {s.decision.decision:<8} {s.decision.rule}")
-    print(f"\nDrafts waiting for approval: {[(d.to, d.thread_id) for d, _ in approvals.submitted]}")
-    print(f"Messages sent: {len(mailbox.outbox)}")
+    for e in report.call_log.entries:
+        print(f"{e['message_id']}  {e['source']:<6} {str(e['tool']):<14} {e['decision']:<8} {e['rule']}")
+    print(f"\nAwaiting approval: {[(r.record_id, r.to, r.status) for r in approvals.pending()]}")
+    print(f"Sent mail: {len(mailbox.outbox)} (only ApprovalQueue.approve() can add to it)")
+    path = os.environ.get("CALL_LOG_PATH")
+    if path:
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(report.call_log.to_jsonl())
+        print(f"Call log: {len(report.call_log.entries)} entries written to {path}")
     return 0
 
 

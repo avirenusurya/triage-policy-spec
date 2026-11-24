@@ -3,8 +3,8 @@
 Order is fixed: look up the thread's stored From header -> policy.enforce.enforce()
 -> only then a handler. BLOCKED calls never reach a handler. PENDING replies become
 drafts in the approval queue. This module has no way to put mail on the wire:
-delivery belongs to the approval queue after a human approves (approval_queue/approvals.py),
-and it must call enforce() again at that point.
+delivery happens only in ApprovalQueue.approve() (approval_queue/approvals.py), which
+calls enforce() again first. Every call, BLOCKED ones included, gets one CallLog entry.
 """
 
 from __future__ import annotations
@@ -47,20 +47,33 @@ def _thread_from(call, mailbox) -> str | None:
         return None
 
 
-def dispatch(call, mailbox, approvals, audit_log: list | None = None) -> Outcome:
+def dispatch(call, mailbox, approvals, log=None, context: dict | None = None) -> Outcome:
     """Run one model tool call. `mailbox` must provide thread_from/read/search/add_label/move;
-    `approvals` must provide submit(draft, decision)."""
+    `approvals` must provide submit(draft, decision, call). `log` (a tools.call_log.CallLog)
+    gets one entry per call; `context` adds fields to it (message_id, source, raw_arguments)."""
     decision = enforce(call, _thread_from(call, mailbox))
-    if audit_log is not None:
-        audit_log.append(decision)
+    outcome = _execute(call, decision, mailbox, approvals)
+    if log is not None:
+        log.record(call, decision, _log_result(outcome), context)
+    return outcome
 
+
+def _execute(call, decision, mailbox, approvals) -> Outcome:
     if decision.decision == ALLOWED:
         return Outcome(decision, _HANDLERS[decision.tool](mailbox, **call["args"]))
 
     if decision.decision == PENDING:
         args = call["args"]
         draft = Draft(thread_id=args["thread_id"], to=decision.recipient, body=args["body"])
-        approvals.submit(draft, decision)
-        return Outcome(decision, draft)
+        record = approvals.submit(draft, decision, call)
+        return Outcome(decision, record if record is not None else draft)
 
     return Outcome(decision)  # BLOCKED: no handler, no draft
+
+
+def _log_result(outcome: Outcome):
+    result = outcome.result
+    record_id = getattr(result, "record_id", None)
+    if record_id is not None:  # PENDING: point at the approval record, nothing was delivered
+        return {"approval_id": record_id, "status": result.status, "to": result.to}
+    return result

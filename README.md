@@ -16,7 +16,8 @@ Least-privilege tool and recipient policy for the mail triage agent.
 - `agent/runner.py`: the agent runner. Builds the model's tool list from `tools/definitions.py` only, fences each message inside `<inbox_data>` (HTML-escaped, so an email can't close the fence) as data, never instructions, and passes every tool call the model returns through `dispatch()`. Mail from outside microsoft.com is labelled `Needs human – external sender` by code
 - `agent/stub_model.py`: scripted offline model (`MODEL_ROUTE=stub`) that triages normal mail and always tries to obey the hostile email
 - `agent/sandbox.py`: in-memory mailbox, recording approval queue and the seeded messages used by the runner and the `seeded_inbox` fixture
-- `approval_queue/approvals.py`: placeholder (next stage). Named `approval_queue/` so it never shadows Python's built-in `queue` module
+- `approval_queue/approvals.py`: the approval queue. Stores each PENDING reply as a record (tool, full arguments, timestamp, status). `approve()` is the only function that delivers mail, and it re-runs `enforce()` first. `reject()` discards the draft. Named `approval_queue/` so it never shadows Python's built-in `queue` module
+- `tools/call_log.py`: one structured entry per tool call, BLOCKED calls included: tool, arguments exactly as the model passed them, decision, rule, reason, result
 - `tests/`: pytest suite, one parametrised case per replay row (RPL-001 to 033) plus tool-layer and fail-closed edge cases
 - `tests/conftest.py`: `seeded_inbox` fixture with 10 messages: normal team mail across the triage categories, the February close thread (the one worth stealing), exactly 1 hostile email from an outside gmail address, and exactly 1 message that needs a reply to a microsoft.com colleague
 - `pytest-results.txt`: saved `pytest -v` output
@@ -41,6 +42,7 @@ Configuration comes from environment variables only. Never put the key in a file
 |---|---|
 | `MODEL_ROUTE` | `stub` for the offline scripted model, or an OpenRouter model slug (`<provider>/<model>`). No default. |
 | `OPENROUTER_API_KEY` | Your OpenRouter key. Only read for a live route. |
+| `CALL_LOG_PATH` | Optional. Write the structured call log there as JSON Lines. |
 
 ```
 MODEL_ROUTE=stub python -m agent.runner                    # offline, no key needed
